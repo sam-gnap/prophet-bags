@@ -9,31 +9,8 @@ from prophet.diagnostics import performance_metrics
 
 # COMMAND ----------
 
-pd.set_option('display.max_rows', 100)
-
-# COMMAND ----------
-
-df_bags = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`bag_prophet`').toPandas()
-df_rps = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`lgwams_rps`').toPandas()
-df_events = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`events`').toPandas()
-df_comp = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`competition_lonams`').toPandas()
-
-# COMMAND ----------
-
-df_comp = df_comp.sort_values(by='dtdeparturedate').reset_index(drop=True)
-
-# COMMAND ----------
-
-df_comp['hour'] = df_comp['tmdeparturetime'].dt.hour
-
-# COMMAND ----------
-
-df_comp['n_comp_date'] = df_comp.groupby(by=['dtdeparturedate'])['vchflightnumber'].transform('count')
-df_comp['n_comp_hour'] = df_comp.groupby(by=['dtdeparturedate','hour'])['vchflightnumber'].transform('count')
-
-# COMMAND ----------
-
-df_comp['hour'] = df_comp.hour.astype('int')
+# MAGIC %md
+# MAGIC The best result so far has changepoint_prior_scale of 0.001 seasonality_prior_scale of 0.01 with seasonality_mode being multiplicative 15.456195 RMSE.
 
 # COMMAND ----------
 
@@ -46,18 +23,6 @@ def morning_lunch_afternoon_evening(hour):
         return 'afternoon'
     else:
         return 'evening'
-df_comp['tod'] = df_comp['hour'].apply(morning_lunch_afternoon_evening)
-
-# COMMAND ----------
-
-df_comp = pd.get_dummies(df_comp, columns=['tod'], prefix='', prefix_sep='')
-
-# COMMAND ----------
-
-df_comp['n_comp_morning'] = df_comp.groupby(by=['dtdeparturedate'])['morning'].transform('sum')
-df_comp['n_comp_lunch'] = df_comp.groupby(by=['dtdeparturedate'])['lunch'].transform('sum')
-df_comp['n_comp_afternoon'] = df_comp.groupby(by=['dtdeparturedate'])['afternoon'].transform('sum')
-df_comp['n_comp_evening'] = df_comp.groupby(by=['dtdeparturedate'])['evening'].transform('sum')
 
 # COMMAND ----------
 
@@ -78,6 +43,104 @@ def prepare_data(df_events, df_rps):
     df_rps = df_rps.sort_values(by='ds').reset_index(drop=True)
     rps = df_rps.loc[(df_rps['ds']>'2015-01-01')&(df_rps['ds']<'2022-10-20')]
     return rps, df_events
+
+# COMMAND ----------
+
+pd.set_option('display.max_rows', 100)
+
+# COMMAND ----------
+
+df_bags = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`bag_prophet`').toPandas()
+df_rps = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`lgwams_rps`').toPandas()
+df_events = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`events`').toPandas()
+df_comp = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`competition_lonams`').toPandas()
+
+# COMMAND ----------
+
+df_comp = df_comp.sort_values(by='dtdeparturedate').reset_index(drop=True)
+df_comp['hour'] = df_comp['tmdeparturetime'].dt.hour
+df_comp['n_comp_date'] = df_comp.groupby(by=['dtdeparturedate'])['vchflightnumber'].transform('count')
+df_comp['n_comp_hour'] = df_comp.groupby(by=['dtdeparturedate','hour'])['vchflightnumber'].transform('count')
+df_comp['hour'] = df_comp.hour.astype('int')
+df_comp['tod'] = df_comp['hour'].apply(morning_lunch_afternoon_evening)
+df_comp = pd.get_dummies(df_comp, columns=['tod'], prefix='', prefix_sep='')
+df_comp['n_comp_morning'] = df_comp.groupby(by=['dtdeparturedate'])['morning'].transform('sum')
+df_comp['n_comp_lunch'] = df_comp.groupby(by=['dtdeparturedate'])['lunch'].transform('sum')
+df_comp['n_comp_afternoon'] = df_comp.groupby(by=['dtdeparturedate'])['afternoon'].transform('sum')
+df_comp['n_comp_evening'] = df_comp.groupby(by=['dtdeparturedate'])['evening'].transform('sum')
+
+# COMMAND ----------
+
+rps, events = prepare_data(df_events, df_rps)
+
+# COMMAND ----------
+
+comp = df_comp[['dtdeparturedate','n_comp_date','n_comp_morning','n_comp_lunch','n_comp_afternoon','n_comp_evening']].drop_duplicates()
+comp.columns = ['ds','n_comp_date','n_comp_morning','n_comp_lunch','n_comp_afternoon','n_comp_evening']
+
+# COMMAND ----------
+
+rps['date'] = pd.to_datetime(rps['ds'].dt.date)
+rps = rps.loc[(rps['ds']>'2015-10-01')]
+
+# COMMAND ----------
+
+df = pd.merge(rps,
+        comp,
+        left_on='date',
+        right_on='ds').drop(columns=['date','ds_y'])
+
+# COMMAND ----------
+
+df.columns = ['ds','y', 'n_comp_date', 'n_comp_morning', 'n_comp_lunch',
+       'n_comp_afternoon', 'n_comp_evening']
+
+# COMMAND ----------
+
+m = Prophet(holidays=events,changepoint_prior_scale=0.001,seasonality_prior_scale=0.01)
+m.add_regressor('n_comp_date')
+m.add_regressor('n_comp_morning')
+m.add_regressor('n_comp_lunch')
+m.add_regressor('n_comp_afternoon')
+m.add_regressor('n_comp_evening')
+
+# COMMAND ----------
+
+m.fit(df)
+
+# COMMAND ----------
+
+df_cv = cross_validation(m, initial='730 days', period='180 days', horizon = '365 days', parallel="processes")
+df_p = performance_metrics(df_cv)
+
+# COMMAND ----------
+
+df_p.mdape.mean(), df_p.smape.mean()
+
+# COMMAND ----------
+
+# DBTITLE 1,Results 
+Without any additional regressors we get: 
+    MDAPE: 0.19226
+    SMAPE: 0.25942
+Using all additional regressors we get: 
+    MDAPE: 0.18308
+    SMAPE: 0.25253
+
+# COMMAND ----------
+
+prediction = m.predict(df.loc[df['ds']>'2022-06-01',['ds','n_comp_date', 'n_comp_morning', 'n_comp_lunch',
+       'n_comp_afternoon', 'n_comp_evening']])
+
+# COMMAND ----------
+
+df_merged = pd.merge(prediction[['ds','yhat']],
+         rps.loc[rps['ds']>'2022-06-01',['ds','y']],
+        on='ds')
+
+# COMMAND ----------
+
+df_merged.loc[df_merged['ds']>'2022-07-01'].head(30)
 
 # COMMAND ----------
 
@@ -109,131 +172,6 @@ print(tuning_results)
 # COMMAND ----------
 
 print(tuning_results)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC The best result so far has changepoint_prior_scale of 0.001 seasonality_prior_scale of 0.01 with seasonality_mode being multiplicative 15.456195 RMSE.
-
-# COMMAND ----------
-
-tuning_results.sort_values(by='rmse').head(10)
-
-# COMMAND ----------
-
-rps, events = prepare_data(df_events, df_rps)
-
-# COMMAND ----------
-
-comp = df_comp[['dtdeparturedate','n_comp_date','n_comp_morning','n_comp_lunch','n_comp_afternoon','n_comp_evening']]
-
-# COMMAND ----------
-
-comp.columns = ['ds','n_comp_date','n_comp_morning','n_comp_lunch','n_comp_afternoon','n_comp_evening']
-
-# COMMAND ----------
-
-rps['date'] = pd.to_datetime(rps['ds'].dt.date)
-
-# COMMAND ----------
-
-rps = rps.loc[(rps['ds']>'2015-10-01')]
-
-# COMMAND ----------
-
-df = pd.merge(rps,
-        comp,
-        left_on='date',
-        right_on='ds').drop(columns=['date','ds_y'])
-
-# COMMAND ----------
-
-df.columns = ['ds','y', 'n_comp_date', 'n_comp_morning', 'n_comp_lunch',
-       'n_comp_afternoon', 'n_comp_evening']
-
-# COMMAND ----------
-
-m = Prophet(holidays=events,changepoint_prior_scale=0.001,seasonality_prior_scale=0.01)
-
-# COMMAND ----------
-
-m.add_regressor('n_comp_date')
-m.add_regressor('n_comp_morning')
-m.add_regressor('n_comp_lunch')
-m.add_regressor('n_comp_afternoon')
-m.add_regressor('n_comp_evening')
-
-# COMMAND ----------
-
-m.fit(df)
-
-# COMMAND ----------
-
-df_cv = cross_validation(m, initial='730 days', period='180 days', horizon = '365 days', parallel="processes")
-
-# COMMAND ----------
-
-df_p = performance_metrics(df_cv)
-df_p.head()
-
-# COMMAND ----------
-
-df_p.rmse.mean()
-
-# COMMAND ----------
-
-df_p.rmse.mean()
-
-# COMMAND ----------
-
-m = Prophet(holidays=events,changepoint_prior_scale=0.001,seasonality_prior_scale=0.01).fit(df)
-
-# COMMAND ----------
-
-df_cv = cross_validation(m, initial='730 days', period='180 days', horizon = '365 days', parallel="processes")
-
-# COMMAND ----------
-
-df_p = performance_metrics(df_cv)
-df_p.head()
-
-# COMMAND ----------
-
-df_p.rmse.mean()
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-prediction = m.predict(rps.loc[rps['ds']>'2022-06-01',['ds']])
-
-# COMMAND ----------
-
-fig = m.plot(prediction)
-
-# COMMAND ----------
-
-df = pd.merge(prediction[['ds','yhat']],
-         rps.loc[rps['ds']>'2022-06-01',['ds','y']],
-        on='ds')
-
-# COMMAND ----------
-
-df[['y','yhat']].plot()
-
-# COMMAND ----------
-
-df.loc[df['ds']>'2022-07-01'].head(30)
 
 # COMMAND ----------
 
