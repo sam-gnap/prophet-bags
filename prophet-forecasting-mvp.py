@@ -6,6 +6,7 @@ from prophet import Prophet
 from prophet.plot import add_changepoints_to_plot
 from prophet.diagnostics import cross_validation
 from prophet.diagnostics import performance_metrics
+pd.set_option('display.max_rows', 100)
 
 # COMMAND ----------
 
@@ -37,6 +38,7 @@ def prepare_data(df_events, df_rps):
     for t_col in ['ds', 'ds_upper']:
         lockdowns[t_col] = pd.to_datetime(lockdowns[t_col])
     lockdowns['upper_window'] = (lockdowns['ds_upper'] - lockdowns['ds']).dt.days
+    df_events = pd.concat([df_events,lockdowns[['holiday', 'ds', 'lower_window', 'upper_window']]]).reset_index(drop=True)
     df_rps['RPS'] = df_rps['ticketrevenuegbpbudgetnet']/df_rps['lid']
     df_rps = df_rps[['departuredate','RPS']]    
     df_rps.columns = ['ds','y']
@@ -46,12 +48,9 @@ def prepare_data(df_events, df_rps):
 
 # COMMAND ----------
 
-pd.set_option('display.max_rows', 100)
-
-# COMMAND ----------
-
 df_bags = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`bag_prophet`').toPandas()
 df_rps = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`lgwams_rps`').toPandas()
+df_rps_all = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`rps_all_sectors`').toPandas()
 df_events = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`events`').toPandas()
 df_comp = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`competition_lonams`').toPandas()
 
@@ -72,6 +71,10 @@ df_comp['n_comp_evening'] = df_comp.groupby(by=['dtdeparturedate'])['evening'].t
 # COMMAND ----------
 
 rps, events = prepare_data(df_events, df_rps)
+
+# COMMAND ----------
+
+events
 
 # COMMAND ----------
 
@@ -98,20 +101,24 @@ df.columns = ['ds','y', 'n_comp_date', 'n_comp_morning', 'n_comp_lunch',
 # COMMAND ----------
 
 m = Prophet(holidays=events,changepoint_prior_scale=0.001,seasonality_prior_scale=0.01)
-m.add_regressor('n_comp_date')
-m.add_regressor('n_comp_morning')
-m.add_regressor('n_comp_lunch')
-m.add_regressor('n_comp_afternoon')
-m.add_regressor('n_comp_evening')
+#m.add_regressor('n_comp_date')
+#m.add_regressor('n_comp_morning')
+#m.add_regressor('n_comp_lunch')
+#m.add_regressor('n_comp_afternoon')
+#m.add_regressor('n_comp_evening')
 
 # COMMAND ----------
 
-m.fit(df)
+m.fit(rps)
 
 # COMMAND ----------
 
 df_cv = cross_validation(m, initial='730 days', period='180 days', horizon = '365 days', parallel="processes")
 df_p = performance_metrics(df_cv)
+
+# COMMAND ----------
+
+df_p.mdape.mean(), df_p.smape.mean()
 
 # COMMAND ----------
 
@@ -129,8 +136,7 @@ Using all additional regressors we get:
 
 # COMMAND ----------
 
-prediction = m.predict(df.loc[df['ds']>'2022-06-01',['ds','n_comp_date', 'n_comp_morning', 'n_comp_lunch',
-       'n_comp_afternoon', 'n_comp_evening']])
+prediction = m.predict(rps.loc[rps['ds']>'2022-06-01',['ds']])
 
 # COMMAND ----------
 
