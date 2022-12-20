@@ -6,9 +6,35 @@ pd.set_option('display.max_rows', 100)
 
 # COMMAND ----------
 
-bags1 = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_1`').toPandas()
-bags2 = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_2`').toPandas()
-bags3 = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_3`').toPandas()
+bags1 = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_1`').toPandas()
+bags2 = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_2`').toPandas()
+bags3 = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_3`').toPandas()
+
+# COMMAND ----------
+
+bags1_hist = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_11`').toPandas()
+bags2_hist = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_22`').toPandas()
+bags3_hist = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_33`').toPandas()
+
+# COMMAND ----------
+
+df = pd.concat([bags1_hist,bags2_hist,bags3_hist,bags1,bags2,bags3])
+
+# COMMAND ----------
+
+df.shape
+
+# COMMAND ----------
+
+sparkDF=spark.createDataFrame(df) 
+
+# COMMAND ----------
+
+display(sparkDF)
+
+# COMMAND ----------
+
+
 
 # COMMAND ----------
 
@@ -21,6 +47,18 @@ predictions = pd.concat([bags1,bags2,bags3])
 # COMMAND ----------
 
 predictions.head()
+
+# COMMAND ----------
+
+sparkDF=spark.createDataFrame(predictions) 
+
+# COMMAND ----------
+
+display(sparkDF)
+
+# COMMAND ----------
+
+
 
 # COMMAND ----------
 
@@ -112,21 +150,21 @@ df_bags.sector.nunique()
 # COMMAND ----------
 
 temp_df = pd.DataFrame()
-for i, sector in enumerate(df_bags.sector.unique()):
+for i, sector in enumerate(df_bags.sector.unique()[300:]):
     print('--------------------------')
     print('--------------------------')
     print(i,sector)
     if i==300:
         spark_df = spark.createDataFrame(temp_df)
-        spark_df.write.mode("overwrite").saveAsTable("`ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_1`")
+        spark_df.write.mode("overwrite").saveAsTable("`ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_22`")
         temp_df = pd.DataFrame()
     elif i==600:
         spark_df = spark.createDataFrame(temp_df)
-        spark_df.write.mode("overwrite").saveAsTable("`ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_2`")
+        spark_df.write.mode("overwrite").saveAsTable("`ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_33`")
         temp_df = pd.DataFrame()
     elif i==900:
         spark_df = spark.createDataFrame(temp_df)
-        spark_df.write.mode("overwrite").saveAsTable("`ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_3`")
+        spark_df.write.mode("overwrite").saveAsTable("`ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_44`")
         temp_df = pd.DataFrame()
     else:
         df_future_sector = df_future.loc[df_future['sector']==sector,['ds']]
@@ -142,24 +180,24 @@ for i, sector in enumerate(df_bags.sector.unique()):
                     seasonality_prior_scale=0.01,
                     seasonality_mode='multiplicative')
         m.fit(df_history)
-        prediction = m.predict(df_future_sector)
+        prediction = m.predict(df_history)
         prediction = prediction[['ds','trend','yhat','holidays','weekly','yearly']]
         prediction['sector'] = sector
         temp_df = pd.concat([temp_df,prediction])
 
 # COMMAND ----------
 
+prediction.columns
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
 spark_df = spark.createDataFrame(temp_df)
 
-spark_df.write.mode("overwrite").saveAsTable("`ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_1`")
-
-# COMMAND ----------
-
-pd_df = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_3`').toPandas()
-
-# COMMAND ----------
-
-pd_df.head()
+spark_df.write.mode("overwrite").saveAsTable("`ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_4`")
 
 # COMMAND ----------
 

@@ -11,6 +11,18 @@ pd.set_option('display.max_rows', 100)
 
 # COMMAND ----------
 
+pd_df = spark.sql('select * from `ds_data_analytics`.`data_analytics_sandbox`.`bags_pred_all_1`')
+
+# COMMAND ----------
+
+display(pd_df)
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
 df_events = sqlContext.sql('SELECT * FROM `ds_data_analytics`.`data_analytics_sandbox`.`sam_e_all`').toPandas()
 
 # COMMAND ----------
